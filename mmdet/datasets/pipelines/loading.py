@@ -345,13 +345,14 @@ class LoadAnnotations:
 
         h, w = results['img_info']['height'], results['img_info']['width']
         gt_masks = results['ann_info']['masks']
-        if self.poly2mask:
-            gt_masks = BitmapMasks(
-                [self._poly2mask(mask, h, w) for mask in gt_masks], h, w)
-        else:
-            gt_masks = PolygonMasks(
-                [self.process_polygons(polygons) for polygons in gt_masks], h,
-                w)
+        # if self.poly2mask:
+        #     gt_masks = BitmapMasks(
+        #         [self._poly2mask(mask, h, w) for mask in gt_masks], h, w)
+        # else:
+        #     gt_masks = PolygonMasks(
+        #         [self.process_polygons(polygons) for polygons in gt_masks], h,
+        #         w)
+        gt_masks = BitmapMasks(gt_masks, h, w)
         results['gt_masks'] = gt_masks
         results['mask_fields'].append('gt_masks')
         return results
