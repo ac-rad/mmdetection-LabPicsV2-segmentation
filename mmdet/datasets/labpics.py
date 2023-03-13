@@ -1,5 +1,4 @@
 # Copyright (c) OpenMMLab. All rights reserved.
-import os.path as osp
 import warnings
 from collections import OrderedDict
 
@@ -13,12 +12,15 @@ from .builder import DATASETS
 from .custom import CustomDataset
 
 import os
-import torch
-from PIL import Image
-from torchvision import datasets
-import json
-import shutil
-import matplotlib.pyplot as plt
+from tqdm import tqdm
+from .labpics_helper import LabPicsHelper
+
+# here there are 3 classes
+labpics_classes = {"Vessel": 1, "Liquid": 2, "Cork": 0, "Solid": 2, "Part": 0, "Foam": 2, "Gel": 2, "Label": 0, "Vapor":2, "Other Material":2}
+labpics_subclasses = {"Syringe": 0, "Pippete": 1, "Tube": 2, "IVBag": 3, "DripChamber": 4, "IVBottle": 5, "Beaker": 6,
+                "RoundFlask": 7, "Cylinder": 8, "SeparatoryFunnel": 9, "Funnel": 10, "Burete": 11,
+                "ChromatographyColumn": 12, "Condenser": 13, "Bottle": 14, "Jar": 15, "Connector": 16, "Flask": 17,
+                "Cup": 18, "Bowl": 19, "Erlenmeyer": 20, "Vial": 21, "Dish": 22, "HeatingVessel": 23, }
 
 @DATASETS.register_module()
 class LabPicsDataset(CustomDataset):
@@ -58,7 +60,7 @@ class LabPicsDataset(CustomDataset):
             during tests.
     """
 
-    CLASSES = ("Vehicle", 'Material')
+    CLASSES = ("Vessel", 'Material', 'Other')
 
     PALETTE = [(220, 20, 60), (119, 11, 32)]
 
@@ -69,16 +71,17 @@ class LabPicsDataset(CustomDataset):
     def load_annotations(self, ann_file):
         """Load annotation from annotation file."""
         data_dir = "/home/alexliu/Dev/LabPicV2_Dataset"
-        dataset = LabPicV2Dataset(os.path.join(data_dir, "Chemistry"), ["Vessel, Material"], classes=3)
+        dataset = LabPicsHelper(os.path.join(data_dir, "Chemistry"), ["Vessel", "Material"], classes=labpics_classes)
         
         # Loop through all images in dataset, create a list of dicts called data_infos, where each dict
         # contains the image path, width, height, and annotations. dataset is a torch.utils.data.Dataset
         # object, so we can use the __getitem__ method to get the image and annotations.
         data_infos = []
-        for i in range(len(dataset)):
+        no_bbox = 0
+        for i in tqdm(range(len(dataset)//200), mininterval=1):
             img, ann = dataset.__getitem__(i)
-            img_path = dataset.imgs[i]
-            img_width, img_height = img.size
+            img_path = img['img_path']
+            img_width, img_height = img['img_size']
             ann_dict = {
                 'filename': img_path,
                 'width': img_width,
@@ -86,9 +89,13 @@ class LabPicsDataset(CustomDataset):
                 'ann': {
                     'bboxes': ann['boxes'],
                     'labels': ann['labels'],
+                    'masks': ann['masks']
                 }
             }
             data_infos.append(ann_dict)
+            if len(ann['boxes']) == 0:
+                no_bbox += 1
+        print(f"Number of images with no bounding boxes: {no_bbox}")
         return data_infos
 
     def load_proposals(self, proposal_file):
@@ -283,42 +290,46 @@ class LabPicsDataset(CustomDataset):
             scale_ranges (list[tuple] | None): Scale ranges for evaluating mAP.
                 Default: None.
         """
-
-        if not isinstance(metric, str):
-            assert len(metric) == 1
-            metric = metric[0]
+        metrics = metric if isinstance(metric, list) else [metric]
+        # if not isinstance(metric, str):
+        #     assert len(metric) == 1
+        #     metric = metric[0]
         allowed_metrics = ['mAP', 'recall']
-        if metric not in allowed_metrics:
-            raise KeyError(f'metric {metric} is not supported')
+        for metric in metrics:
+            if metric not in allowed_metrics:
+                raise KeyError(f'metric {metric} is not supported')
+
         annotations = [self.get_ann_info(i) for i in range(len(self))]
         eval_results = OrderedDict()
         iou_thrs = [iou_thr] if isinstance(iou_thr, float) else iou_thr
-        if metric == 'mAP':
-            assert isinstance(iou_thrs, list)
-            mean_aps = []
-            for iou_thr in iou_thrs:
-                print_log(f'\n{"-" * 15}iou_thr: {iou_thr}{"-" * 15}')
-                mean_ap, _ = eval_map(
-                    results,
-                    annotations,
-                    scale_ranges=scale_ranges,
-                    iou_thr=iou_thr,
-                    dataset=self.CLASSES,
-                    logger=logger)
-                mean_aps.append(mean_ap)
-                eval_results[f'AP{int(iou_thr * 100):02d}'] = round(mean_ap, 3)
-            eval_results['mAP'] = sum(mean_aps) / len(mean_aps)
-        elif metric == 'recall':
-            gt_bboxes = [ann['bboxes'] for ann in annotations]
-            recalls = eval_recalls(
-                gt_bboxes, results, proposal_nums, iou_thr, logger=logger)
-            for i, num in enumerate(proposal_nums):
-                for j, iou in enumerate(iou_thrs):
-                    eval_results[f'recall@{num}@{iou}'] = recalls[i, j]
-            if recalls.shape[1] > 1:
-                ar = recalls.mean(axis=1)
+
+        for metric in metrics:
+            if metric == 'mAP':
+                assert isinstance(iou_thrs, list)
+                mean_aps = []
+                for iou_thr in iou_thrs:
+                    print_log(f'\n{"-" * 15}iou_thr: {iou_thr}{"-" * 15}')
+                    mean_ap, _ = eval_map(
+                        results,
+                        annotations,
+                        scale_ranges=scale_ranges,
+                        iou_thr=iou_thr,
+                        dataset=self.CLASSES,
+                        logger=logger)
+                    mean_aps.append(mean_ap)
+                    eval_results[f'AP{int(iou_thr * 100):02d}'] = round(mean_ap, 3)
+                eval_results['mAP'] = sum(mean_aps) / len(mean_aps)
+            elif metric == 'recall':
+                gt_bboxes = [ann['bboxes'] for ann in annotations]
+                recalls = eval_recalls(
+                    gt_bboxes, results, proposal_nums, iou_thr, logger=logger)
                 for i, num in enumerate(proposal_nums):
-                    eval_results[f'AR@{num}'] = ar[i]
+                    for j, iou in enumerate(iou_thrs):
+                        eval_results[f'recall@{num}@{iou}'] = recalls[i, j]
+                if recalls.shape[1] > 1:
+                    ar = recalls.mean(axis=1)
+                    for i, num in enumerate(proposal_nums):
+                        eval_results[f'AR@{num}'] = ar[i]
         return eval_results
 
     def __repr__(self):
@@ -363,93 +374,3 @@ class LabPicsDataset(CustomDataset):
         table = AsciiTable(table_data)
         result += table.table
         return result
-
-class LabPicV2Dataset(datasets.VisionDataset):
-    def __init__(self, root, source,  transform=None, target_transform=None, transforms=None, classes=None, subclasses=None, train=True, load_subclasses=False):
-        super(LabPicV2Dataset, self).__init__(root, transforms, transform, target_transform)
-        self.root = root
-        self.source = source
-        self.annotations = []
-        self.classes = classes
-        self.subclass = subclasses
-        self.train = train
-        self.load_subclasses = load_subclasses
-        self.datapath = self.root + ("/Train" if train else "/Eval")
-        print("Creating annotation list for reader this might take a while")
-        for AnnDir in os.listdir(self.datapath):
-            self.annotations.append(self.datapath+"/"+AnnDir)
-        print(self.classes)
-        print("Total=" + str(len(self.annotations)))
-        print("done making file list")
-
-    def __getitem__(self, idx):
-        data_path = self.annotations[idx]
-        data = json.load(open(data_path + '/Data.json', 'r'))
-        img = os.path.join(data_path, "Image.jpg")
-        num_objs = 0
-        labels = []
-        sub_class = []
-        masks = []
-        boxes = []
-
-        def _create_item(data_i, type):
-            try:
-                labels.append(self.classes[data_i[type][0]])
-            except:
-                print(data_i)
-                print(type)
-            if self.load_subclasses:
-                sub_label = np.zeros(len(self.subclass) + 1)
-                for sub_cls in data_i[type]:
-                    if sub_cls in self.subclass:
-                        sub_label[self.subclass[sub_cls]] = 1
-                sub_class.append(sub_label)
-            mask = Image.open(data_path + data_i["MaskFilePath"])
-            mask = np.array(mask)
-            if len(mask.shape) == 3:
-                mask = mask[:, :, -1]
-            foreGround = mask > 0
-            masks.append(foreGround)
-            pos = np.where(foreGround)
-            try:
-                xmin = np.min(pos[1])
-                xmax = np.max(pos[1])
-                ymin = np.min(pos[0])
-                ymax = np.max(pos[0])
-                boxes.append([xmin, ymin, xmax, ymax])
-            except:
-                print(pos)
-                print(data_path)
-
-        if "Vessel" in self.source:
-            num_objs += len(data["Vessels"])
-            for item in data["Vessels"].keys():
-                _create_item(data["Vessels"][item], "VesselType_ClassNames")
-
-        if "Material" in self.source:
-            num_objs += len(data["MaterialsAndParts"])
-            for item in data["MaterialsAndParts"].keys():
-                if not (data["MaterialsAndParts"][item]["IsPart"] or data["MaterialsAndParts"][item]["IsOnSurface"] or data["MaterialsAndParts"][item]['IsScattered'] or data["MaterialsAndParts"][item]['IsFullSegmentableMaterialPhase']):
-                    _create_item(data["MaterialsAndParts"][item], "MaterialType_ClassNames")
-
-        valid_boxes = []
-        valid_labels = []
-        valid_masks = []
-        for box, i in enumerate(boxes):
-            if box[3] > box[1] and box[2] > box[0]:
-                valid_boxes.append(box)
-                valid_labels.append(labels[i])
-                valid_masks.append(masks[i])
-        
-        target = {
-            "boxes": valid_boxes,
-            "labels": valid_labels,
-            "masks": valid_masks,
-            "image_id": torch.tensor([idx]),
-            "sub_cls": sub_class,
-        }
-
-        return img, target
-
-    def __len__(self):
-        return len(self.annotations)
