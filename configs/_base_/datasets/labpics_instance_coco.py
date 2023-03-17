@@ -1,5 +1,5 @@
 # dataset settings
-dataset_type = 'LabPicsDataset'
+dataset_type = 'CocoDataset'
 data_root = '/home/alexliu/Dev/LabPicV2_Dataset/Chemistry/'
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
@@ -33,21 +33,21 @@ data = dict(
     workers_per_gpu=1,
     train=dict(
         type=dataset_type,
-        ann_file=data_root + 'Train/',
+        ann_file=data_root + 'Train/train.json',
         img_prefix=data_root + 'Train/',
         pipeline=train_pipeline),
     val=dict(
         type=dataset_type,
-        ann_file=data_root + 'Eval/',
+        ann_file=data_root + 'Eval/val.json',
         img_prefix=data_root + 'Eval/',
         pipeline=test_pipeline),
     test=dict(
         type=dataset_type,
-        ann_file=data_root + 'Eval/',
+        ann_file=data_root + 'Eval/val_partial.json',
         img_prefix=data_root + 'Eval/',
         pipeline=test_pipeline))
         
 evaluation = dict(
-    metric=['mAP', 'recall'],
+    metric=['segm', 'bbox'],
     save_best='segm',
     interval=5)

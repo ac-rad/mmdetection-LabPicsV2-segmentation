@@ -4,6 +4,10 @@ from torchvision import datasets
 import json
 import os
 import numpy as np
+from tqdm import tqdm
+import mmcv
+
+from skimage import measure
 
 class LabPicsHelper(datasets.VisionDataset):
     def __init__(self, root, source, classes=None, subclasses=None, train=True, load_subclasses=False):
@@ -14,10 +18,10 @@ class LabPicsHelper(datasets.VisionDataset):
         self.subclass = subclasses
         self.train = train
         self.load_subclasses = load_subclasses
-        self.datapath = self.root + ("/Train" if train else "/Eval")
+        # self.datapath = self.root + ("/Train" if train else "/Eval")
         print("Creating annotation list for reader this might take a while")
-        for AnnDir in os.listdir(self.datapath):
-            self.annotations.append(self.datapath+"/"+AnnDir)
+        for AnnDir in os.listdir(self.root):
+            self.annotations.append(self.root+"/"+AnnDir)
         print("Total=" + str(len(self.annotations)))
         print("done making file list")
 
@@ -105,33 +109,93 @@ class LabPicsHelper(datasets.VisionDataset):
     def __len__(self):
         return len(self.annotations)
 
+def close_contour(contour):
+    if not np.array_equal(contour[0], contour[-1]):
+        contour = np.vstack((contour, contour[0]))
+    return contour
+
+def binary_mask_to_polygon(binary_mask, tolerance=0):
+    """Converts a binary mask to COCO polygon representation
+    Args:
+        binary_mask: a 2D binary numpy array where '1's represent the object
+        tolerance: Maximum distance from original points of polygon to approximated
+            polygonal chain. If tolerance is 0, the original coordinate array is returned.
+    """
+    # check if the mask is truely binary
+    assert(np.array_equal(np.unique(binary_mask), [0, 1]))
+    polygons = []
+    # pad mask to close contours of shapes which start and end at an edge
+    padded_binary_mask = np.pad(binary_mask, pad_width=1, mode='constant', constant_values=0)
+    contours = measure.find_contours(padded_binary_mask, 0.5)
+    contours = [np.subtract(contour, 1) for contour in contours] # fix for ValueError
+    for contour in contours:
+        contour = close_contour(contour)
+        contour = measure.approximate_polygon(contour, tolerance)
+        if len(contour) < 3:
+            continue
+        contour = np.flip(contour, axis=1)
+        segmentation = contour.ravel().tolist()
+        # after padding and subtracting 1 we may get -0.5 points in our segmentation 
+        segmentation = [0 if i < 0 else i for i in segmentation]
+        polygons.append(segmentation)
+
+    return polygons
+
+
+def create_coco_style_json(train=True):
+    labpics_classes = {"Vessel": 1, "Liquid": 2, "Cork": 0, "Solid": 2, "Part": 0, "Foam": 2, "Gel": 2, "Label": 0, "Vapor":2, "Other Material":2}
+    
+    dataset_root = "/home/alexliu/Dev/LabPicV2_Dataset/Chemistry"
+    if train:
+        dataset_root = os.path.join(dataset_root, "Train")
+    else:
+        dataset_root = os.path.join(dataset_root, "Eval")
+
+    lp_helper_dataset = LabPicsHelper(dataset_root, ["Vessel", "Material"], classes=labpics_classes)
+
+    dataset = {
+    'images': [],
+    'annotations': [],
+    'categories': []
+    }
+    category_names = ['Vessel', 'Material', 'Other']
+    category_ids = [1, 2, 3]
+
+    for i, category_name in enumerate(category_names):
+        dataset['categories'].append({
+            'id': category_ids[i],
+            'name': category_name,
+        })
+
+    for i in tqdm(range(len(lp_helper_dataset)//20), mininterval=1):
+        img, ann = lp_helper_dataset.__getitem__(i)
+        img_path = img['img_path']
+        img_width, img_height = img['img_size']
+        img_id = len(dataset['images']) + 1
+        dataset['images'].append({
+            'id': img_id,
+            'file_name': img_path,
+            'width': img_width,
+            'height': img_height,
+        })
+        for j, box in enumerate(ann['boxes']):
+            xmin, ymin, xmax, ymax = box
+            polygons = binary_mask_to_polygon(ann['masks'][j])
+            dataset['annotations'].append({
+                'id': len(dataset['annotations']) + 1,
+                'image_id': img_id,
+                'category_id': ann['labels'][j],
+                'bbox': [xmin, ymin, xmax - xmin, ymax - ymin],
+                'area': (xmax - xmin) * (ymax - ymin),
+                'segmentation': polygons,
+                'iscrowd': 0,
+            })
+
+    print("Finished creating {} dataset".format("train" if train else "val"))
+    file_name = 'train.json' if train else 'val_partial.json'
+    mmcv.dump(dataset, os.path.join(dataset_root, file_name))
+
+
 if __name__ == "__main__":
-    pass
-    # data_dir = "/home/alexliu/Dev/LabPicV2_Dataset"
-    # dataset = LabPicsHelper(os.path.join(data_dir, "Chemistry"), ["Vessel, Material"], classes=labpics_classes)
-    
-    # # Loop through all images in dataset, create a list of dicts called data_infos, where each dict
-    # # contains the image path, width, height, and annotations. dataset is a torch.utils.data.Dataset
-    # # object, so we can use the __getitem__ method to get the image and annotations.
-    # data_infos = []    
-    # for i in range(len(dataset)):
-    #     # Add a progress bar for loading the annotations
-    #     if i % 100 == 0:
-    #         print(f"Loading annotations: {i}/{len(dataset)}")
-    #     img, ann = dataset.__getitem__(i)
-    #     img_path = img['img_path']
-    #     img_width, img_height = img['img_size']
-    #     ann_dict = {
-    #         'filename': img_path,
-    #         'width': img_width,
-    #         'height': img_height,
-    #         'ann': {
-    #             'bboxes': ann['boxes'],
-    #             'labels': ann['labels'],
-    #         }
-    #     }
-    #     data_infos.append(ann_dict)
-    
-    # # Save the data_infos list to a json file
-    # with open(os.path.join(data_dir, 'data_infos.json'), 'w') as f:
-    #     json.dump(data_infos, f)
+    # create_coco_style_json(train=True)
+    create_coco_style_json(train=False)

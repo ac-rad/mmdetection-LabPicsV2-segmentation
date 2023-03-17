@@ -1,6 +1,6 @@
 _base_ = [
     '../_base_/models/mask_rcnn_r50_fpn.py',
-    '../_base_/datasets/labpics_instance.py',
+    '../_base_/datasets/labpics_instance_coco.py',
     '../_base_/schedules/schedule_1x.py', '../_base_/default_runtime.py'
 ]
 
@@ -120,13 +120,13 @@ optimizer = dict(
             'relative_position_bias_table': dict(decay_mult=0.),
             'norm': dict(decay_mult=0.)
         }))
-# lr_config = dict(warmup_iters=1000, step=[27, 33])
-runner = dict(type='EpochBasedRunner', max_epochs=5)
+
+runner = dict(type='EpochBasedRunner', max_epochs=15)
 
 load_from = 'https://download.openmmlab.com/mmdetection/v2.0/swin/mask_rcnn_swin-t-p4-w7_fpn_1x_coco/mask_rcnn_swin-t-p4-w7_fpn_1x_coco_20210902_120937-9d6b7cfa.pth'
 
 checkpoint_config = dict(  # Config to set the checkpoint hook, Refer to https://github.com/open-mmlab/mmcv/blob/master/mmcv/runner/hooks/checkpoint.py for implementation.
-    interval=1)  # The save interval is 1
+    interval=5)  # The save interval is 5
 
 # log_config = dict(  # config to register logger hook
 #     interval=50,  # Interval to print the log
@@ -134,4 +134,4 @@ checkpoint_config = dict(  # Config to set the checkpoint hook, Refer to https:/
 #         dict(type='TextLoggerHook', by_epoch=False),
 #         dict(type='TensorboardLoggerHook', by_epoch=False)
 #     ])  # The logger used to record the training process.
-log_config = dict(interval=10)
+log_config = dict(interval=100)

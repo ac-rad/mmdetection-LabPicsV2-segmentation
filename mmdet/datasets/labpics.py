@@ -12,6 +12,9 @@ from .builder import DATASETS
 from .custom import CustomDataset
 
 import os
+import os.path as osp
+import tempfile
+
 from tqdm import tqdm
 from .labpics_helper import LabPicsHelper
 
@@ -70,15 +73,14 @@ class LabPicsDataset(CustomDataset):
 
     def load_annotations(self, ann_file):
         """Load annotation from annotation file."""
-        data_dir = "/home/alexliu/Dev/LabPicV2_Dataset"
-        dataset = LabPicsHelper(os.path.join(data_dir, "Chemistry"), ["Vessel", "Material"], classes=labpics_classes)
+        dataset = LabPicsHelper(ann_file, ["Vessel", "Material"], classes=labpics_classes)
         
         # Loop through all images in dataset, create a list of dicts called data_infos, where each dict
         # contains the image path, width, height, and annotations. dataset is a torch.utils.data.Dataset
         # object, so we can use the __getitem__ method to get the image and annotations.
         data_infos = []
         no_bbox = 0
-        for i in tqdm(range(len(dataset)//200), mininterval=1):
+        for i in tqdm(range(len(dataset)//20), mininterval=1):
             img, ann = dataset.__getitem__(i)
             img_path = img['img_path']
             img_width, img_height = img['img_size']
@@ -266,16 +268,153 @@ class LabPicsDataset(CustomDataset):
                 cat2imgs[cat].append(i)
         return cat2imgs
 
-    def format_results(self, results, **kwargs):
-        """Place holder to format result to dataset specific output."""
+    def xyxy2xywh(self, bbox):
+        """Convert ``xyxy`` style bounding boxes to ``xywh`` style for COCO
+        evaluation.
 
+        Args:
+            bbox (numpy.ndarray): The bounding boxes, shape (4, ), in
+                ``xyxy`` order.
+
+        Returns:
+            list[float]: The converted bounding boxes, in ``xywh`` order.
+        """
+
+        _bbox = bbox.tolist()
+        return [
+            _bbox[0],
+            _bbox[1],
+            _bbox[2] - _bbox[0],
+            _bbox[3] - _bbox[1],
+        ]
+
+    def _det2json(self, results):
+        """Convert detection results to COCO json style."""
+        json_results = []
+        for idx in range(len(self)):
+            img_id = self.img_ids[idx]
+            result = results[idx]
+            for label in range(len(result)):
+                bboxes = result[label]
+                for i in range(bboxes.shape[0]):
+                    data = dict()
+                    data['image_id'] = img_id
+                    data['bbox'] = self.xyxy2xywh(bboxes[i])
+                    data['score'] = float(bboxes[i][4])
+                    data['category_id'] = self.cat_ids[label]
+                    json_results.append(data)
+        return json_results
+
+    def _segm2json(self, results):
+        """Convert instance segmentation results to COCO json style."""
+        bbox_json_results = []
+        segm_json_results = []
+        for idx in range(len(self)):
+            img_id = self.img_ids[idx]
+            det, seg = results[idx]
+            for label in range(len(det)):
+                # bbox results
+                bboxes = det[label]
+                for i in range(bboxes.shape[0]):
+                    data = dict()
+                    data['image_id'] = img_id
+                    data['bbox'] = self.xyxy2xywh(bboxes[i])
+                    data['score'] = float(bboxes[i][4])
+                    data['category_id'] = self.cat_ids[label]
+                    bbox_json_results.append(data)
+
+                # segm results
+                # some detectors use different scores for bbox and mask
+                if isinstance(seg, tuple):
+                    segms = seg[0][label]
+                    mask_score = seg[1][label]
+                else:
+                    segms = seg[label]
+                    mask_score = [bbox[4] for bbox in bboxes]
+                for i in range(bboxes.shape[0]):
+                    data = dict()
+                    data['image_id'] = img_id
+                    data['bbox'] = self.xyxy2xywh(bboxes[i])
+                    data['score'] = float(mask_score[i])
+                    data['category_id'] = self.cat_ids[label]
+                    if isinstance(segms[i]['counts'], bytes):
+                        segms[i]['counts'] = segms[i]['counts'].decode()
+                    data['segmentation'] = segms[i]
+                    segm_json_results.append(data)
+        return bbox_json_results, segm_json_results
+
+
+    def results2json(self, results, outfile_prefix):
+        """Dump the detection results to a COCO style json file.
+
+        There are 2 types of results: bbox predictions and mask
+        predictions, and they have different data types. This method will
+        automatically recognize the type, and dump them to json files.
+
+        Args:
+            results (list[list | tuple | ndarray]): Testing results of the
+                dataset.
+            outfile_prefix (str): The filename prefix of the json files. If the
+                prefix is "somepath/xxx", the json files will be named
+                "somepath/xxx.bbox.json", "somepath/xxx.segm.json",
+                "somepath/xxx.proposal.json".
+
+        Returns:
+            dict[str: str]: Possible keys are "bbox", "segm", and \
+                values are corresponding filenames.
+        """
+        result_files = dict()
+        if isinstance(results[0], list):
+            json_results = self._det2json(results)
+            result_files['bbox'] = f'{outfile_prefix}.bbox.json'
+            mmcv.dump(json_results, result_files['bbox'])
+        elif isinstance(results[0], tuple):
+            json_results = self._segm2json(results)
+            result_files['bbox'] = f'{outfile_prefix}.bbox.json'
+            result_files['segm'] = f'{outfile_prefix}.segm.json'
+            mmcv.dump(json_results[0], result_files['bbox'])
+            mmcv.dump(json_results[1], result_files['segm'])
+        elif isinstance(results[0], np.ndarray):
+            json_results = self._proposal2json(results)
+            mmcv.dump(json_results, result_files['proposal'])
+        else:
+            raise TypeError('invalid type of results')
+        return result_files
+
+    def format_results(self, results, jsonfile_prefix=None):
+        """Place holder to format result to dataset specific output.
+        Args:
+            results (list[tuple | numpy.ndarray]): Testing results of the
+                dataset.
+            jsonfile_prefix (str | None): The prefix of json files. It includes
+                the file path and the prefix of filename, e.g., "a/b/prefix".
+                If not specified, a temp file will be created. Default: None.
+
+        Returns:
+            tuple: (result_files, tmp_dir), result_files is a dict containing \
+                the json filepaths, tmp_dir is the temporal directory created \
+                for saving json files when jsonfile_prefix is not specified.
+        """
+        assert isinstance(results, list), 'results must be a list'
+        assert len(results) == len(self), (
+            'The length of results is not equal to the dataset len: {} != {}'.
+            format(len(results), len(self)))
+
+        if jsonfile_prefix is None:
+            tmp_dir = tempfile.TemporaryDirectory()
+            jsonfile_prefix = osp.join(tmp_dir.name, 'results')
+        else:
+            tmp_dir = None
+        result_files = self.results2json(results, jsonfile_prefix)
+        return result_files, tmp_dir
+        
     def evaluate(self,
-                 results,
-                 metric='mAP',
-                 logger=None,
-                 proposal_nums=(100, 300, 1000),
-                 iou_thr=0.5,
-                 scale_ranges=None):
+                    results,
+                    metric='mAP',
+                    logger=None,
+                    proposal_nums=(100, 300, 1000),
+                    iou_thr=0.5,
+                    scale_ranges=None):
         """Evaluate the dataset.
 
         Args:
@@ -298,6 +437,18 @@ class LabPicsDataset(CustomDataset):
         for metric in metrics:
             if metric not in allowed_metrics:
                 raise KeyError(f'metric {metric} is not supported')
+
+        result_files, tmp_dir = self.format_results(results)
+        print(result_files)
+        print(tmp_dir)
+
+        # print("Length of results:", len(results))
+        # print("Type of results:", type(results[0]))
+        # print("Length of results[0]:", len(results[0]))
+        # print("Type of results[0][0]:", type(results[0][0]))
+        # print("Length of results[0][0]:", len(results[0][0]))
+        # print("Type of results[0][1]:", type(results[0][1]))
+        # print("Length of results[0][1]:", len(results[0][1]))
 
         annotations = [self.get_ann_info(i) for i in range(len(self))]
         eval_results = OrderedDict()
