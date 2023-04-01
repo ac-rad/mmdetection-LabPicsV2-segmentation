@@ -1,5 +1,6 @@
 # Copyright (c) OpenMMLab. All rights reserved.
 import os.path as osp
+import os
 import pickle
 import shutil
 import tempfile
@@ -27,8 +28,8 @@ def single_gpu_test(model,
     for i, data in enumerate(data_loader):
         with torch.no_grad():
             result = model(return_loss=False, rescale=True, **data)
-
         batch_size = len(result)
+        # torch.cuda.empty_cache()
         if show or out_dir:
             if batch_size == 1 and isinstance(data['img'][0], torch.Tensor):
                 img_tensor = data['img'][0]
@@ -44,9 +45,22 @@ def single_gpu_test(model,
 
                 ori_h, ori_w = img_meta['ori_shape'][:-1]
                 img_show = mmcv.imresize(img_show, (ori_w, ori_h))
-
+                orig_file = None
                 if out_dir:
-                    out_file = osp.join(out_dir, img_meta['ori_filename'])
+                    # Check if out_dir exists, if not, create it, if it exists and is not empty, erase it then create it.
+                    # if not os.path.exists(out_dir):
+                    #     os.makedirs(out_dir)
+                    # elif os.listdir(out_dir):
+                    #     shutil.rmtree(out_dir)
+                    #     os.makedirs(out_dir)
+                    # Take only the lowest level directory name from img_meta['ori_filename']
+                    # to avoid creating too many directories.
+                    out_file = osp.join(out_dir, osp.basename(osp.dirname(img_meta['ori_filename'])), osp.basename(img_meta['ori_filename']))
+                    orig_file = out_file
+                    gt_file = out_file.replace('.jpg', '_annotated.jpg')
+                    # append the suffix _output to the filename
+                    out_file = out_file.replace('.jpg', '_output.jpg')
+                    # out_file = osp.join(out_dir, img_meta['ori_filename'])
                 else:
                     out_file = None
 
@@ -59,6 +73,15 @@ def single_gpu_test(model,
                     show=show,
                     out_file=out_file,
                     score_thr=show_score_thr)
+
+                if orig_file and gt_file:
+                    # Grap the original image from the full path img_meta['ori_filename'], and copy it to the output directory.
+                    shutil.copy(img_meta['ori_filename'], orig_file)
+                    # Grab the gt_file and copy it to the same directory as the path in img_meta['ori_filename']
+                    out_file_gt = img_meta['ori_filename'].replace('.jpg', '_annotated.jpg')
+                    # Check if out_file_gt exists, if not, skip it.
+                    if os.path.exists(out_file_gt):
+                        shutil.copy(out_file_gt, gt_file)
 
         # encode mask results
         if isinstance(result[0], tuple):

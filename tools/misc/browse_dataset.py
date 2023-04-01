@@ -44,11 +44,16 @@ def parse_args():
         'It also allows nested list/tuple values, e.g. key="[(a,b),(c,d)]" '
         'Note that the quotation marks are necessary and that no white space '
         'is allowed.')
+    parser.add_argument(
+        '--train',
+        action='store_true',
+        help='whether to browse the training set or the test set'
+    )
     args = parser.parse_args()
     return args
 
 
-def retrieve_data_cfg(config_path, skip_type, cfg_options):
+def retrieve_data_cfg(config_path, skip_type, cfg_options, train=False):
 
     def skip_pipeline_steps(config):
         config['pipeline'] = [
@@ -65,7 +70,10 @@ def retrieve_data_cfg(config_path, skip_type, cfg_options):
 
     if cfg_options is not None:
         cfg.merge_from_dict(cfg_options)
-    train_data_cfg = cfg.data.train
+    if train:
+        train_data_cfg = cfg.data.train
+    else:
+        train_data_cfg = cfg.data.vis
     while 'dataset' in train_data_cfg and train_data_cfg[
             'type'] != 'MultiImageMixDataset':
         train_data_cfg = train_data_cfg['dataset']
@@ -80,13 +88,16 @@ def retrieve_data_cfg(config_path, skip_type, cfg_options):
 
 def main():
     args = parse_args()
-    cfg = retrieve_data_cfg(args.config, args.skip_type, args.cfg_options)
+    cfg = retrieve_data_cfg(args.config, args.skip_type, args.cfg_options, train=args.train)
 
-    if 'gt_semantic_seg' in cfg.train_pipeline[-1]['keys']:
-        cfg.data.train.pipeline = [
-            p for p in cfg.data.train.pipeline if p['type'] != 'SegRescale'
-        ]
-    dataset = build_dataset(cfg.data.train)
+    if args.train:
+        dataset = build_dataset(cfg.data.train)
+        if 'gt_semantic_seg' in cfg.train_pipeline[-1]['keys']:
+            cfg.data.train.pipeline = [
+                p for p in cfg.data.train.pipeline if p['type'] != 'SegRescale'
+            ]
+    else:
+        dataset = build_dataset(cfg.data.vis)
 
     progress_bar = mmcv.ProgressBar(len(dataset))
 
@@ -117,6 +128,8 @@ def main():
             # please comment the following line
             gt_bboxes = None
 
+        img_folder = Path(item['filename']).parent
+
         imshow_det_bboxes(
             item['img'],
             gt_bboxes,
@@ -128,7 +141,8 @@ def main():
             out_file=filename,
             bbox_color=dataset.PALETTE,
             text_color=(200, 200, 200),
-            mask_color=dataset.PALETTE)
+            mask_color=dataset.PALETTE,
+            img_prefix=img_folder)
 
         progress_bar.update()
 

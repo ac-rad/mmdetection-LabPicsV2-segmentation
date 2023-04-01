@@ -14,6 +14,8 @@ from ..mask.structures import bitmap_to_polygon
 from ..utils import mask2ndarray
 from .palette import get_palette, palette_val
 
+from os import path as osp
+
 __all__ = [
     'color_val_matplotlib', 'draw_masks', 'draw_bboxes', 'draw_labels',
     'imshow_det_bboxes', 'imshow_gt_det_bboxes'
@@ -163,7 +165,7 @@ def draw_labels(ax,
     return ax
 
 
-def draw_masks(ax, img, masks, color=None, with_edge=True, alpha=0.8):
+def draw_masks(ax, img, masks, color=None, with_edge=True, alpha=0.5):
     """Draw masks on the image and their edges on the axes.
 
     Args:
@@ -219,7 +221,8 @@ def imshow_det_bboxes(img,
                       win_name='',
                       show=True,
                       wait_time=0,
-                      out_file=None):
+                      out_file=None,
+                      img_prefix=None):
     """Draw bboxes and class labels (with scores) on an image.
 
     Args:
@@ -371,6 +374,9 @@ def imshow_det_bboxes(img,
             plt.pause(wait_time)
     if out_file is not None:
         mmcv.imwrite(img, out_file)
+
+    if img_prefix is not None:
+        mmcv.imwrite(img, osp.join(img_prefix, "Image_annotated.jpg"))
 
     plt.close()
 
