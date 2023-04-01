@@ -6,6 +6,7 @@ import os
 import numpy as np
 from tqdm import tqdm
 import mmcv
+import torch
 
 from skimage import measure
 
@@ -31,18 +32,19 @@ class LabPicsHelper(datasets.VisionDataset):
         img_size = (Image.open(data_path + "/Image.jpg").convert("RGB")).size
         img_path = os.path.join(data_path, "Image.jpg")
         img = {"img_path": img_path, "img_size": img_size}
-        num_objs = 0
         labels = []
         sub_class = []
         masks = []
         boxes = []
 
         def _create_item(data_i, type):
-            try:
+            if data_i[type]:
                 labels.append(self.classes[data_i[type][0]])
-            except:
+            else:
+                print("Empty", type)
                 print(data_i)
-                print(type)
+                print()
+                return
             if self.load_subclasses:
                 sub_label = np.zeros(len(self.subclass) + 1)
                 for sub_cls in data_i[type]:
@@ -67,15 +69,13 @@ class LabPicsHelper(datasets.VisionDataset):
                 print(data_path)
 
         if "Vessel" in self.source:
-            num_objs += len(data["Vessels"])
             for item in data["Vessels"].keys():
                 _create_item(data["Vessels"][item], "VesselType_ClassNames")
 
         if "Material" in self.source:
-            num_objs += len(data["MaterialsAndParts"])
             for item in data["MaterialsAndParts"].keys():
-                if not (data["MaterialsAndParts"][item]["IsPart"] or data["MaterialsAndParts"][item]["IsOnSurface"] or data["MaterialsAndParts"][item]['IsScattered'] or data["MaterialsAndParts"][item]['IsFullSegmentableMaterialPhase']):
-                    _create_item(data["MaterialsAndParts"][item], "MaterialType_ClassNames")
+                if not (data["MaterialsAndParts"][item]["IsPart"]):
+                     _create_item(data["MaterialsAndParts"][item], "MaterialType_ClassNames")
 
         valid_boxes = []
         valid_labels = []
@@ -143,8 +143,19 @@ def binary_mask_to_polygon(binary_mask, tolerance=0):
 
 
 def create_coco_style_json(train=True):
-    labpics_classes = {"Vessel": 1, "Liquid": 2, "Cork": 0, "Solid": 2, "Part": 0, "Foam": 2, "Gel": 2, "Label": 0, "Vapor":2, "Other Material":2}
-    
+    # labpics_classes = {"Vessel": 1, "Liquid": 2, "Cork": 0, "Solid": 2, "Part": 0, "Foam": 2, "Gel": 2, "Label": 0, "Vapor":2, "Other Material":2}
+    labpics_classes = {"Vessel": 1, "Syringe": 1, "Pippete": 1, "Tube": 1, "IVBag": 1, "DripChamber": 1, "IVBottle": 1,
+     "Beaker": 1, "RoundFlask": 1, "Cylinder": 1, "SeparatoryFunnel": 1, "Funnel": 1, "Burete": 1,
+     "ChromatographyColumn": 1, "Condenser": 1, "Bottle": 1, "Jar": 1, "Connector": 1, "Flask": 1,
+     "Cup": 1, "Bowl": 1, "Erlenmeyer": 1, "Vial": 1, "Dish": 1, "HeatingVessel": 1, "Transparent": 0,
+     "SemiTrans": 0, "Opaque": 0, "Cork": 0, "Label": 0, "Part": 0, "Spike": 0, "Valve": 0, "DisturbeView": 0,
+     "Liquid": 2, "Foam": 2, "Suspension": 2, "Solid": 2, "Filled": 2, "Powder": 2, "Urine": 2, "Blood": 2,
+     "MaterialOnSurface": 0, "MaterialScattered": 0, "PropertiesMaterialInsideImmersed": 0,
+     "PropertiesMaterialInFront": 0, "Gel": 2, "Granular": 2, "SolidLargChunk": 2, "Vapor": 2,
+     "Other Material": 2, "VesselInsideVessel": 0, "VesselLinked": 0, "PartInsideVessel": 0,
+     "SolidIncludingParts": 0, "MagneticStirer": 0, "Thermometer": 0, "Spatula": 0, "Holder": 0,
+     "Filter": 0, "PipeTubeStraw": 0}
+
     dataset_root = "/home/alexliu/Dev/LabPicV2_Dataset/Chemistry"
     if train:
         dataset_root = os.path.join(dataset_root, "Train")
@@ -158,8 +169,8 @@ def create_coco_style_json(train=True):
     'annotations': [],
     'categories': []
     }
-    category_names = ['Vessel', 'Material', 'Other']
-    category_ids = [1, 2, 3]
+    category_names = ['Vessel', 'Material']
+    category_ids = [1, 2]
 
     for i, category_name in enumerate(category_names):
         dataset['categories'].append({
@@ -167,7 +178,7 @@ def create_coco_style_json(train=True):
             'name': category_name,
         })
 
-    for i in tqdm(range(len(lp_helper_dataset)//20), mininterval=1):
+    for i in tqdm(range(len(lp_helper_dataset)//3), mininterval=1):
         img, ann = lp_helper_dataset.__getitem__(i)
         img_path = img['img_path']
         img_width, img_height = img['img_size']
@@ -192,10 +203,29 @@ def create_coco_style_json(train=True):
             })
 
     print("Finished creating {} dataset".format("train" if train else "val"))
-    file_name = 'train.json' if train else 'val_partial.json'
+    file_name = 'train.json' if train else 'val_reduced.json'
     mmcv.dump(dataset, os.path.join(dataset_root, file_name))
 
 
+def filter_large_images(data_json_path):
+    with open(data_json_path, 'r') as f:
+        dataset = json.load(f)
+    image_ids = set()
+    total_removed = 0
+    total_original = len(dataset['images'])
+    for img in dataset['images']:
+        if img['width'] * img['height'] > 2500 * 2500:
+            image_ids.add(img['id'])
+            print("Removing image {}".format(img['file_name']))
+            dataset['images'].remove(img)
+            total_removed += 1
+    for ann in dataset['annotations']:
+        if ann['image_id'] in image_ids:
+            dataset['annotations'].remove(ann)
+    new_file_name = data_json_path.split('.')[0] + '_filtered.json'
+    mmcv.dump(dataset, new_file_name)
+    print("Finished filtering large images, removed {} images out of {}".format(total_removed, total_original))
+
 if __name__ == "__main__":
-    # create_coco_style_json(train=True)
-    create_coco_style_json(train=False)
+    # create_coco_style_json(train=False)
+    filter_large_images("/home/alexliu/Dev/LabPicV2_Dataset/Chemistry/Eval/val.json")
