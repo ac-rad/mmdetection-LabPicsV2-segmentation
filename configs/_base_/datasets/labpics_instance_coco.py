@@ -28,9 +28,14 @@ test_pipeline = [
             dict(type='Collect', keys=['img']),
         ])
 ]
+vis_pipeline = [
+    dict(type='LoadImageFromFile'),
+    dict(type='LoadAnnotations', with_bbox=True, with_mask=True),
+]
+
 data = dict(
-    samples_per_gpu=6,
-    workers_per_gpu=1,
+    samples_per_gpu=4,
+    workers_per_gpu=4,
     train=dict(
         type=dataset_type,
         ann_file=data_root + 'Train/train.json',
@@ -43,11 +48,16 @@ data = dict(
         pipeline=test_pipeline),
     test=dict(
         type=dataset_type,
-        ann_file=data_root + 'Eval/val_partial.json',
+        ann_file=data_root + 'Eval/val.json',
         img_prefix=data_root + 'Eval/',
-        pipeline=test_pipeline))
+        pipeline=test_pipeline),
+    vis=dict(
+        type=dataset_type,
+        ann_file=data_root + 'Train/train.json',
+        img_prefix=data_root + 'Train/',
+        pipeline=vis_pipeline))
         
 evaluation = dict(
     metric=['segm', 'bbox'],
-    save_best='segm',
-    interval=5)
+    save_best='segm_mAP',
+    classwise=True)

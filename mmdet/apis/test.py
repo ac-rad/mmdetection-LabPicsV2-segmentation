@@ -29,7 +29,7 @@ def single_gpu_test(model,
         with torch.no_grad():
             result = model(return_loss=False, rescale=True, **data)
         batch_size = len(result)
-        # torch.cuda.empty_cache()
+        torch.cuda.empty_cache()
         if show or out_dir:
             if batch_size == 1 and isinstance(data['img'][0], torch.Tensor):
                 img_tensor = data['img'][0]
