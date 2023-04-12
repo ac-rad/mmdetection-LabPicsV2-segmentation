@@ -218,36 +218,43 @@ optimizer = dict(
         norm_decay_mult=0.0))
 optimizer_config = dict(grad_clip=dict(max_norm=0.01, norm_type=2))
 
-# learning policy
 lr_config = dict(
     policy='step',
-    gamma=0.1,
-    by_epoch=False,
-    step=[327778, 355092],
     warmup='linear',
-    warmup_by_epoch=False,
-    warmup_ratio=1.0,  # no warmup
-    warmup_iters=10)
+    warmup_iters=500,
+    warmup_ratio=0.001,
+    step=[8, 11])
 
-max_iters = 368750
-runner = dict(type='IterBasedRunner', max_iters=max_iters)
+# learning policy
+# lr_config = dict(
+#     policy='step',
+#     gamma=0.1,
+#     by_epoch=False,
+#     step=[327778, 355092],
+#     warmup='linear',
+#     warmup_by_epoch=False,
+#     warmup_ratio=1.0,  # no warmup
+#     warmup_iters=10)
 
-log_config = dict(
-    interval=50,
-    hooks=[
-        dict(type='TextLoggerHook', by_epoch=False),
-        dict(type='TensorboardLoggerHook', by_epoch=False)
-    ])
-interval = 5000
-workflow = [('train', interval)]
-checkpoint_config = dict(
-    by_epoch=False, interval=interval, save_last=True, max_keep_ckpts=3)
+# max_iters = 368750
+# runner = dict(type='IterBasedRunner', max_iters=max_iters)
 
-# Before 365001th iteration, we do evaluation every 5000 iterations.
-# After 365000th iteration, we do evaluation every 368750 iterations,
-# which means that we do evaluation at the end of training.
-dynamic_intervals = [(max_iters // interval * interval + 1, max_iters)]
-evaluation = dict(
-    interval=interval,
-    dynamic_intervals=dynamic_intervals,
-    metric=['PQ', 'bbox', 'segm'])
+# log_config = dict(
+#     interval=50,
+#     hooks=[
+#         dict(type='TextLoggerHook', by_epoch=False),
+#         dict(type='TensorboardLoggerHook', by_epoch=False)
+#     ])
+# interval = 5000
+# workflow = [('train', interval)]
+# checkpoint_config = dict(
+#     by_epoch=False, interval=interval, save_last=True, max_keep_ckpts=3)
+
+# # Before 365001th iteration, we do evaluation every 5000 iterations.
+# # After 365000th iteration, we do evaluation every 368750 iterations,
+# # which means that we do evaluation at the end of training.
+# dynamic_intervals = [(max_iters // interval * interval + 1, max_iters)]
+# evaluation = dict(
+#     interval=interval,
+#     dynamic_intervals=dynamic_intervals,
+#     metric=['PQ', 'bbox', 'segm'])

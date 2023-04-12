@@ -4,39 +4,29 @@ _base_ = [
     '../_base_/schedules/schedule_1x.py', '../_base_/default_runtime.py'
 ]
 
+pretrained = 'https://github.com/SwinTransformer/storage/releases/download/v1.0.0/swin_small_patch4_window7_224.pth'  # noqa
+
 model = dict(
     type='MaskRCNN',
     backbone=dict(
-        type='ResNet',
-        depth=50,
-        num_stages=4,
+        _delete_=True,
+        type='SwinTransformer',
+        embed_dims=96,
+        depths=[2, 2, 18, 2],
+        num_heads=[3, 6, 12, 24],
+        window_size=7,
+        mlp_ratio=4,
+        qkv_bias=True,
+        qk_scale=None,
+        drop_rate=0.,
+        attn_drop_rate=0.,
+        drop_path_rate=0.2,
+        patch_norm=True,
         out_indices=(0, 1, 2, 3),
-        frozen_stages=1,
-        norm_cfg=dict(type='BN', requires_grad=True),
-        norm_eval=True,
-        style='pytorch',
-        init_cfg=dict(type='Pretrained', checkpoint='torchvision://resnet50')),
-    neck=dict(
-        type='FPN',
-        in_channels=[256, 512, 1024, 2048],
-        out_channels=256,
-        num_outs=5),
-    rpn_head=dict(
-        type='RPNHead',
-        in_channels=256,
-        feat_channels=256,
-        anchor_generator=dict(
-            type='AnchorGenerator',
-            scales=[8],
-            ratios=[0.5, 1.0, 2.0],
-            strides=[4, 8, 16, 32, 64]),
-        bbox_coder=dict(
-            type='DeltaXYWHBBoxCoder',
-            target_means=[.0, .0, .0, .0],
-            target_stds=[1.0, 1.0, 1.0, 1.0]),
-        loss_cls=dict(
-            type='CrossEntropyLoss', use_sigmoid=True, loss_weight=1.0),
-        loss_bbox=dict(type='SmoothL1Loss', loss_weight=1.0)),
+        with_cp=False,
+        convert_weights=True,
+        init_cfg=dict(type='Pretrained', checkpoint=pretrained)),
+    neck=dict(in_channels=[96, 192, 384, 768]),
     roi_head=dict(
         type='StandardRoIHead',
         bbox_roi_extractor=dict(
@@ -70,7 +60,7 @@ model = dict(
             conv_out_channels=256,
             num_classes=2,
             loss_mask=dict(
-                type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))),)
+                type='CrossEntropyLoss', use_mask=True, loss_weight=1.0))))
 
 img_norm_cfg = dict(
     mean=[123.675, 116.28, 103.53], std=[58.395, 57.12, 57.375], to_rgb=True)
@@ -117,7 +107,6 @@ train_pipeline = [
     dict(type='DefaultFormatBundle'),
     dict(type='Collect', keys=['img', 'gt_bboxes', 'gt_labels', 'gt_masks']),
 ]
-
 data = dict(train=dict(pipeline=train_pipeline))
 
 optimizer = dict(
@@ -132,16 +121,24 @@ optimizer = dict(
             'relative_position_bias_table': dict(decay_mult=0.),
             'norm': dict(decay_mult=0.)
         }))
+lr_config = dict(warmup_iters=1000, step=[27, 33])
+runner = dict(max_epochs=36)
 
-runner = dict(type='EpochBasedRunner', max_epochs=40)
+fp16 = dict(loss_scale=dict(init_scale=512))
+
+data = dict(
+    samples_per_gpu=4,
+    workers_per_gpu=4)
+
+evaluation = dict(interval=2)
 
 checkpoint_config = dict(  # Config to set the checkpoint hook, Refer to https://github.com/open-mmlab/mmcv/blob/master/mmcv/runner/hooks/checkpoint.py for implementation.
-    interval=5)  # The save interval is 5
+    interval=1,
+    max_keep_ckpts=4)
 
 log_config = dict(  # config to register logger hook
-    interval=200,  # Interval to print the log
+    interval=100,  # Interval to print the log
     hooks=[
         dict(type='TextLoggerHook', by_epoch=True),
         dict(type='TensorboardLoggerHook', by_epoch=True)
     ])  # The logger used to record the training process.
-# log_config = dict(interval=100)
